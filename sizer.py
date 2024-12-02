@@ -121,7 +121,6 @@ class IndexTest(object):
         q_str = f'*=>[KNN {self.knn} @vector $vec_param AS vector_score]'
         q = Query(q_str)\
             .sort_by('vector_score')\
-            .paging(0,1)\
             .return_fields('vector_score')\
             .dialect(4)    
         params_dict = {"vec_param": q_vec}
