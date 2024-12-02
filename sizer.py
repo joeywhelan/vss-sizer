@@ -9,11 +9,11 @@ from enum_actions import enum_action
 from multiprocessing import Pool, cpu_count
 from itertools import repeat
 import uuid
-from time import sleep
+from time import sleep, perf_counter
 #from bfloat16 import bfloat16
 
-REDIS_URL: str = 'redis://@localhost:6379'
-NUM_KEYS: int = 1000
+REDIS_URL: str = 'redis://@localhost:12000'
+NUM_KEYS: int = 100000
 connection: Connection = None
 
 class OBJECT_TYPE(Enum):
@@ -46,6 +46,8 @@ class IndexTest(object):
         self.float_type: FLOAT_TYPE = args.floattype
         self.vec_dim: int = args.vecdim
         self.vec_m: int = args.vecm
+        self.knn: int = args.knn
+        self.iterations: int = args.iterations
 
     def test(self) -> dict:
         """ Public function for initiating all index tests.
@@ -95,25 +97,40 @@ class IndexTest(object):
         ratio: float = round(index_ram/data_ram * 100, 2)  # calculate the index to data memory ratio
         sample_key: str = connection.randomkey()
         doc_size: int = connection.memory_usage(sample_key)  # calculate size of 1 document
+        ave_latency = self.latency()
         return {'index_ram': index_ram, 
                 'data_ram': data_ram, 
                 'index_data': ratio, 
-                'doc_size': doc_size
+                'doc_size': doc_size,
+                'ave_latency': ave_latency
         }
 
-def run_query():
-    global connection
-    q_vec = np.random.default_rng().uniform(0.0, 5.0, size=1536)
-    q_vec = q_vec.astype(np.float16).tobytes() 
-    q_str = f'*=>[KNN {1} @vector $vec_param AS vector_score]'
-    q = Query(q_str)\
-        .sort_by('vector_score')\
-        .paging(0,1)\
-        .return_fields('vector_score')\
-        .dialect(2)    
-    params_dict = {"vec_param": q_vec}
-    doc = connection.ft('idx').search(q, query_params=params_dict)
-    print(doc.docs)
+    def latency(self) -> float:
+        global connection
+        q_vec = np.random.default_rng().uniform(0.0, 5.0, size=self.vec_dim)
+        match self.float_type:
+            #case FLOAT_TYPE.BFLOAT16:
+            #    vec = vec.astype(bfloat16).tolist()
+            case FLOAT_TYPE.FLOAT16:
+                q_vec = q_vec.astype(np.float16).tobytes()
+            case FLOAT_TYPE.FLOAT32:
+                q_vec = q_vec.astype(np.float32).tobytes()
+            case FLOAT_TYPE.FLOAT64:
+                q_vec = q_vec.astype(np.float64).tobytes()
+        
+        q_str = f'*=>[KNN {self.knn} @vector $vec_param AS vector_score]'
+        q = Query(q_str)\
+            .sort_by('vector_score')\
+            .paging(0,1)\
+            .return_fields('vector_score')\
+            .dialect(4)    
+        params_dict = {"vec_param": q_vec}
+ 
+        t1 = perf_counter()
+        for _ in range(self.iterations):
+            connection.ft('idx').search(q, query_params=params_dict)
+        t2 = perf_counter()
+        return round((t2-t1)*1000/self.iterations,2)
 
 
 def load_db(keys: int, object_type: OBJECT_TYPE, vec_dim: int, float_type: FLOAT_TYPE) -> None:
@@ -164,18 +181,22 @@ if __name__ == '__main__':
         action=enum_action(OBJECT_TYPE), default=OBJECT_TYPE.HASH,
         help='Redis Object Type')
     parser.add_argument('--indextype', required=False,
-        action=enum_action(INDEX_TYPE), default=INDEX_TYPE.FLAT,
+        action=enum_action(INDEX_TYPE), default=INDEX_TYPE.HNSW,
         help='Vector Index Type')
     parser.add_argument('--metrictype', required=False,
         action=enum_action(METRIC_TYPE), default=METRIC_TYPE.COSINE,
         help='Vector Metric Type')
     parser.add_argument('--floattype', required=False,
-        action=enum_action(FLOAT_TYPE), default=FLOAT_TYPE.FLOAT16,
+        action=enum_action(FLOAT_TYPE), default=FLOAT_TYPE.FLOAT32,
         help='Vector Float Type')
-    parser.add_argument('--vecdim', required=False, type=int, default=1536,
+    parser.add_argument('--vecdim', required=False, type=int, default=1024,
         help='Vector Dimension')
     parser.add_argument('--vecm', required=False, type=int, default=16,
         help='HNSW M Param')
+    parser.add_argument('--knn', required=False, type=int, default=10,
+        help='KNN Count')
+    parser.add_argument('--iterations', required=False, type=int, default=10,
+        help='Iterations of latency test')
     args = parser.parse_args()
 
     tester: IndexTest = IndexTest(args)
@@ -189,6 +210,8 @@ if __name__ == '__main__':
     print(f'metrictype: {args.metrictype.value}')
     print(f'floattype: {args.floattype.value}')
     print(f'vecdim: {args.vecdim}')
+    print(f'knn: {args.knn}')
+    print(f'iterations: {args.iterations}')
     if (args.indextype is INDEX_TYPE.HNSW):
         print(f'vecm: {args.vecm}')
     print(' ')
@@ -197,4 +220,4 @@ if __name__ == '__main__':
     print(f"data ram used: {result['data_ram']} MB")
     print(f"index to data ratio: {result['index_data']}%")
     print(f"document size: {result['doc_size']} B")
-    #run_query()
+    print(f"average query latency: {result['ave_latency']} ms")
