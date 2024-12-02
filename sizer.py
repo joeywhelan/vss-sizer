@@ -189,7 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--floattype', required=False,
         action=enum_action(FLOAT_TYPE), default=FLOAT_TYPE.FLOAT32,
         help='Vector Float Type')
-    parser.add_argument('--vecdim', required=False, type=int, default=1024,
+    parser.add_argument('--vecdim', required=False, type=int, default=1536,
         help='Vector Dimension')
     parser.add_argument('--vecm', required=False, type=int, default=16,
         help='HNSW M Param')

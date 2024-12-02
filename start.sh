@@ -1,7 +1,7 @@
 #!/bin/bash
 # Maker: Joey Whelan
 # Usage: start.sh
-# Description:  Starts a 1-node Redis Enterpise cluster and builds a Redis target DB.
+# Description:  Starts a 3-node Redis Enterpise cluster and builds a Redis target DB.
 
 echo "*** Launch Redis Enterprise ***"
 docker compose up -d
