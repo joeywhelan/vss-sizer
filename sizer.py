@@ -10,7 +10,6 @@ from multiprocessing import Pool, cpu_count
 from itertools import repeat
 import uuid
 from time import sleep, perf_counter
-#from bfloat16 import bfloat16
 
 REDIS_URL: str = 'redis://@localhost:12000'
 NUM_KEYS: int = 100000
@@ -33,7 +32,6 @@ class FLOAT_TYPE(Enum):
     FLOAT32 = 'float32'
     FLOAT64 = 'float64'
     FLOAT16 = 'float16'
-    BFLOAT16 = 'bfloat16'
 
 class IndexTest(object):
     def __init__(self, args: dict):
@@ -89,9 +87,13 @@ class IndexTest(object):
         data_ram: float = max(1,round(tot_ram - base_ram, 2))  # calculate the data usage alone by substracting base
         
         connection.ft('idx').create_index(schema, definition=idx_def)
+        t1 = perf_counter()
         while (float(connection.ft('idx').info()['percent_indexed']) < 1):
             sleep(1)
+        t2 = perf_counter()
+        index_build = round(t2-t1,2)
         sleep(5)
+
         tot_ram = round(connection.info('memory')['used_memory']/1048576, 2) # get the total memory usage of Redis instance, MB
         index_ram: float = max(1,round(tot_ram - data_ram, 2)) 
         ratio: float = round(index_ram/data_ram * 100, 2)  # calculate the index to data memory ratio
@@ -102,15 +104,14 @@ class IndexTest(object):
                 'data_ram': data_ram, 
                 'index_data': ratio, 
                 'doc_size': doc_size,
-                'ave_latency': ave_latency
+                'ave_latency': ave_latency,
+                'index_build': index_build
         }
 
     def latency(self) -> float:
         global connection
         q_vec = np.random.default_rng().uniform(0.0, 5.0, size=self.vec_dim)
         match self.float_type:
-            #case FLOAT_TYPE.BFLOAT16:
-            #    vec = vec.astype(bfloat16).tolist()
             case FLOAT_TYPE.FLOAT16:
                 q_vec = q_vec.astype(np.float16).tobytes()
             case FLOAT_TYPE.FLOAT32:
@@ -149,8 +150,6 @@ def load_db(keys: int, object_type: OBJECT_TYPE, vec_dim: int, float_type: FLOAT
         match object_type:
             case OBJECT_TYPE.JSON:
                 match float_type:
-                    #case FLOAT_TYPE.BFLOAT16:
-                    #    vec = vec.astype(bfloat16).tolist()
                     case FLOAT_TYPE.FLOAT16:
                         vec = vec.astype(np.float16).tolist()
                     case FLOAT_TYPE.FLOAT32:
@@ -160,8 +159,6 @@ def load_db(keys: int, object_type: OBJECT_TYPE, vec_dim: int, float_type: FLOAT
                 connection.json().set(f'key:{str(uuid.uuid4())}', '$', {'vector': vec})
             case OBJECT_TYPE.HASH:
                 match float_type:
-                    #case FLOAT_TYPE.BFLOAT16:
-                    #    vec = vec.astype(bfloat16).tobytes()
                     case FLOAT_TYPE.FLOAT16:
                         vec = vec.astype(np.float16).tobytes()
                     case FLOAT_TYPE.FLOAT32:
@@ -186,7 +183,7 @@ if __name__ == '__main__':
         action=enum_action(METRIC_TYPE), default=METRIC_TYPE.COSINE,
         help='Vector Metric Type')
     parser.add_argument('--floattype', required=False,
-        action=enum_action(FLOAT_TYPE), default=FLOAT_TYPE.FLOAT32,
+        action=enum_action(FLOAT_TYPE), default=FLOAT_TYPE.FLOAT16,
         help='Vector Float Type')
     parser.add_argument('--vecdim', required=False, type=int, default=1536,
         help='Vector Dimension')
@@ -218,5 +215,6 @@ if __name__ == '__main__':
     print(f"index ram used: {result['index_ram']} MB")
     print(f"data ram used: {result['data_ram']} MB")
     print(f"index to data ratio: {result['index_data']}%")
+    print(f"index build time: {result['index_build']} s")
     print(f"document size: {result['doc_size']} B")
     print(f"average query latency: {result['ave_latency']} ms")
